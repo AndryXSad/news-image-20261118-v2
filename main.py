@@ -1,31 +1,63 @@
-#!/usr/bin/env python3
-"""Write the v2 front-page image to the output path.
+"""Entry point: place the finished front page where the harness expects it.
 
-The entry image is the front page rendered for this repository
-(entry.png) and this program copies it byte for byte to
-/output/entry.png. Python 3.13 standard library only, no network,
-fully deterministic: the same input bytes always produce the same
-output bytes.
+The newspaper image itself is produced by gen_frontpage_v2.py. This script
+does not draw anything; it only copies the finished PNG into the output
+directory and verifies the copy, so the submitted artefact is byte-identical
+to the image in this repository.
 """
+
+import hashlib
 import os
 import shutil
 import sys
 
+MAX_BYTES = 1024 * 1024  # 1 MiB: harness limit for the output image
 
-def main() -> int:
+
+def _repo_file(name):
     here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, "entry.png")
-    with open(src, "rb") as fh:
-        magic = fh.read(8)
-    if magic != b"\x89PNG\r\n\x1a\n":
-        raise SystemExit("entry.png is not a PNG file")
-    if os.path.getsize(src) > 1048576:
-        raise SystemExit("entry.png exceeds the 1 MiB limit")
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    os.makedirs(out_dir, exist_ok=True)
-    shutil.copyfile(src, os.path.join(out_dir, "entry.png"))
+    return os.path.join(here, name)
+
+
+def _sha256_hex(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def main():
+    source = _repo_file("entry.png")
+    destination = "/output/entry.png"
+
+    if not os.path.isfile(source):
+        print(f"missing source image: {source}", file=sys.stderr)
+        return 1
+
+    size = os.path.getsize(source)
+    if size > MAX_BYTES:
+        print(
+            f"source image too large: {size} bytes (limit {MAX_BYTES})",
+            file=sys.stderr,
+        )
+        return 1
+
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    shutil.copyfile(source, destination)
+
+    # Integrity check: the copy must be byte-identical to the source image.
+    if _sha256_hex(source) != _sha256_hex(destination):
+        print("copy mismatch: destination differs from source", file=sys.stderr)
+        return 1
+
+    copied = os.path.getsize(destination)
+    print(
+        f"wrote {destination} ({copied} bytes, "
+        f"sha256 {_sha256_hex(destination)})"
+    )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
